@@ -1,0 +1,11 @@
+# 本地探查残留（Windows 权限删不掉的临时文件，不进仓库）
+_research/
+_scan_asar*.mjs
+_extract*.mjs
+_probe*.mjs
+_check.mjs
+_fetch*.mjs
+*.log
+
+node_modules/
+.pnpm-store/
