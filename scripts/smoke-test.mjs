@@ -45,7 +45,11 @@ function makeNode(tag) {
     removeEventListener() {},
     setPointerCapture() {},
     releasePointerCapture() {},
-    getBoundingClientRect() { return { left: 500, top: 600, width: 92, height: 92 } },
+    getBoundingClientRect() {
+      const left = Number.parseFloat(this.style.left ?? '500')
+      const top = Number.parseFloat(this.style.top ?? '600')
+      return { left, top, width: 92, height: 92, right: left + 92, bottom: top + 92 }
+    },
     set className(v) {},
     get className() { return '' }
   }
@@ -57,6 +61,7 @@ const document = {
   createElementNS(_ns, tag) { return makeNode(tag) },
   createElement(tag) { return makeNode(tag) },
   querySelector() { return null },
+  querySelectorAll() { return [] },
   body: makeNode('body'),
   documentElement: makeNode('html'),
   addEventListener() {},
@@ -239,6 +244,23 @@ for (const fn of hostListeners.get('pointerup')) fn(up2)
 const saved = JSON.parse(window.localStorage.getItem('dsh-grok-ball:pos') || 'null')
 // default is (innerWidth-116, innerHeight-260) = (1324, 640); drag was (-100, -100)
 check('drag persisted position', saved && saved.x === 1224 && saved.y === 540, JSON.stringify(saved))
+
+// composer cover: the ball must stop above the input box, not slide under it
+let composerTop = 620
+document.querySelectorAll = () => [{ getBoundingClientRect: () => ({ top: composerTop, bottom: 680, height: 60, left: 0, right: 1000 }) }]
+for (const fn of windowListeners.get('resize') ?? []) fn()
+const topAfterComposer = Number.parseFloat(hostNode.style.top)
+check('composer clamp keeps ball above input', topAfterComposer <= composerTop - 92, String(topAfterComposer))
+
+// drag past the bottom must not escape the viewport either
+const down3 = { pointerId: 3, pointerType: 'mouse', button: 0, clientX: 540, clientY: 300, preventDefault() {} }
+const move3 = { pointerId: 3, clientX: 540, clientY: 5000 }
+const up3 = { pointerId: 3, clientX: 540, clientY: 5000 }
+for (const fn of hostListeners.get('pointerdown')) fn(down3)
+for (const fn of hostListeners.get('pointermove')) fn(move3)
+for (const fn of hostListeners.get('pointerup')) fn(up3)
+const topAfterDrag = Number.parseFloat(hostNode.style.top)
+check('drag cannot pass the composer', topAfterDrag <= composerTop - 92, String(topAfterDrag))
 
 // cleanup
 if (react.__cleanup) react.__cleanup()

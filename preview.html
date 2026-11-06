@@ -91,6 +91,11 @@
       });
       host.addEventListener('pointercancel', function () { dragging = null; host.style.cursor = 'grab'; });
 
+      // keep the ball inside the window when the page is resized
+      addEventListener('resize', function () {
+        place(host.offsetLeft, host.offsetTop);
+      });
+
       // state tour: the same mapping the DSH plugin uses
       var tour = [
         ['02', 'idle 待机'],
