@@ -4,7 +4,8 @@
  * No browser: a tiny DOM stub is enough because the vendored Grok Ball engine
  * touches exactly createElementNS / querySelector / requestAnimationFrame /
  * performance.now. The test drives the plugin's own apply() -> slot registration
- * -> React mount path, then asserts the DSH state -> emotion mapping.
+ * -> React mount path, then asserts state mapping, dragging, composer clamping,
+ * the menu button and the settings panel.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -23,35 +24,57 @@ function check(name, condition, detail) {
 }
 
 // ---------------------------------------------------------------- DOM stub
-let nodeSeq = 0
 function makeNode(tag) {
   const node = {
-    __id: ++nodeSeq,
     tagName: tag,
     attrs: Object.create(null),
     children: [],
     style: {},
     textContent: '',
-    hidden: false,
+    value: '',
+    type: '',
+    checked: false,
+    title: '',
+    classList: { add() {}, remove() {}, contains() { return false } },
     setAttribute(k, v) { this.attrs[k] = v },
     getAttribute(k) { return this.attrs[k] },
     appendChild(child) { this.children.push(child); child.parentNode = this; return child },
     removeChild(child) {
       const i = this.children.indexOf(child)
       if (i >= 0) this.children.splice(i, 1)
+      child.parentNode = null
       return child
     },
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener(type, fn) {
+      if (!this.__listeners) this.__listeners = new Map()
+      if (!this.__listeners.has(type)) this.__listeners.set(type, [])
+      this.__listeners.get(type).push(fn)
+    },
+    removeEventListener(type, fn) {
+      const list = this.__listeners && this.__listeners.get(type)
+      if (!list) return
+      const i = list.indexOf(fn)
+      if (i >= 0) list.splice(i, 1)
+    },
+    fire(type, event) {
+      const list = this.__listeners && this.__listeners.get(type)
+      for (const fn of list ? [...list] : []) fn(event)
+    },
+    contains(other) {
+      let n = other
+      while (n) {
+        if (n === this) return true
+        n = n.parentNode
+      }
+      return false
+    },
     setPointerCapture() {},
     releasePointerCapture() {},
     getBoundingClientRect() {
       const left = Number.parseFloat(this.style.left ?? '500')
       const top = Number.parseFloat(this.style.top ?? '600')
       return { left, top, width: 92, height: 92, right: left + 92, bottom: top + 92 }
-    },
-    set className(v) {},
-    get className() { return '' }
+    }
   }
   return node
 }
@@ -93,10 +116,6 @@ const window = {
     const i = list.indexOf(fn)
     if (i >= 0) list.splice(i, 1)
   }
-}
-
-function fireWindow(type, event) {
-  for (const fn of windowListeners.get(type) ?? []) fn(event)
 }
 
 // ---------------------------------------------------------------- React stub
@@ -172,7 +191,21 @@ const engine = {
   burst() {},
   destroy() { emotions.push('destroy') }
 }
-window.GrokBall = { create: () => engine }
+window.GrokBall = {
+  create: () => engine,
+  EMOTIONS: [
+    { id: '00', name: '睡眠', group: 'life' },
+    { id: '02', name: '待机放空', group: 'life' },
+    { id: '10', name: '开心', group: 'emotion' },
+    { id: '30', name: '思考中', group: 'agent' },
+    { id: '35', name: '等待输入', group: 'agent' }
+  ],
+  GROUPS: [
+    { key: 'life', name: '生命周期' },
+    { key: 'emotion', name: '情绪反应' },
+    { key: 'agent', name: '代理状态' }
+  ]
+}
 
 let slotRegister = null
 const slots = {
@@ -203,7 +236,7 @@ react.useEffect = (fn) => { react.__cleanup = fn() }
 const rendered = element.type(element.props)
 check('component renders a div', rendered && rendered.type === 'div')
 check('host positioned fixed', hostNode.style.position === 'fixed', hostNode.style.position)
-check('default position persisted none', window.localStorage.getItem('dsh-grok-ball:pos') === null)
+check('default size applied', hostNode.style.width === '92px', hostNode.style.width)
 
 // idle state
 check('idle maps to 02', engine.emotionId === '02', engine.emotionId)
@@ -225,7 +258,7 @@ statusMap.set(sid, { running: false })
 for (const fn of statusListeners) fn()
 check('finish maps to 33', engine.emotionId === '33', engine.emotionId)
 
-// click feedback
+// click feedback + menu button
 const hostListeners = hostEvents.get(hostNode)
 check('host has pointerdown/up listeners', hostListeners && hostListeners.has('pointerdown') && hostListeners.has('pointerup'))
 const down = { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 540, clientY: 640, preventDefault() {} }
@@ -233,6 +266,8 @@ const up = { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 540, client
 for (const fn of hostListeners.get('pointerdown')) fn(down)
 for (const fn of hostListeners.get('pointerup')) fn(up)
 check('click maps to 10', engine.emotionId === '10', engine.emotionId)
+const menuButton = hostNode.children.find((c) => c.tagName === 'button')
+check('menu button appears after click', !!menuButton && menuButton.style.display === 'flex', menuButton && menuButton.style.display)
 
 // drag persists position
 const down2 = { pointerId: 2, pointerType: 'mouse', button: 0, clientX: 540, clientY: 640, preventDefault() {} }
@@ -242,15 +277,65 @@ for (const fn of hostListeners.get('pointerdown')) fn(down2)
 for (const fn of hostListeners.get('pointermove')) fn(move2)
 for (const fn of hostListeners.get('pointerup')) fn(up2)
 const saved = JSON.parse(window.localStorage.getItem('dsh-grok-ball:pos') || 'null')
-// default is (innerWidth-116, innerHeight-260) = (1324, 640); drag was (-100, -100)
 check('drag persisted position', saved && saved.x === 1224 && saved.y === 540, JSON.stringify(saved))
+
+// menu button opens the panel
+menuButton.fire('click', { stopPropagation() {} })
+const panel = document.body.children.find((c) => c.tagName === 'div' && c.style.display === 'block')
+check('panel opens into document.body', !!panel)
+check('panel has close button', !!panel && panel.children.some((c) => c.tagName === 'div'))
+
+const findDeep = (node, pred) => {
+  for (const child of node.children ?? []) {
+    if (pred(child)) return child
+    const hit = findDeep(child, pred)
+    if (hit) return hit
+  }
+  return null
+}
+const slider = findDeep(panel, (n) => n.tagName === 'input' && n.type === 'range')
+check('size slider exists', !!slider && slider.value === '92', slider && slider.value)
+if (slider) {
+  slider.value = '128'
+  slider.fire('input', { target: slider })
+  check('size change resizes host', hostNode.style.width === '128px', hostNode.style.width)
+  check('size persisted', window.localStorage.getItem('dsh-grok-ball:size') === '128')
+}
+
+const chip30 = findDeep(panel, (n) => n.tagName === 'button' && n.textContent === '30 思考中')
+check('emotion chip exists', !!chip30)
+if (chip30) {
+  await new Promise((resolve) => setTimeout(resolve, 900)) // let the click flash expire
+  chip30.fire('click', {})
+  check('chip pins emotion', engine.emotionId === '30', engine.emotionId)
+  check('pinned persisted', window.localStorage.getItem('dsh-grok-ball:emotion') === '30')
+}
+
+const followChip = findDeep(panel, (n) => n.tagName === 'button' && n.textContent === '跟随 DSH 状态')
+check('follow-state chip exists', !!followChip)
+if (followChip) {
+  followChip.fire('click', {})
+  check('follow clears pinned', window.localStorage.getItem('dsh-grok-ball:emotion') === null)
+}
+
+const hideBox = findDeep(panel, (n) => n.tagName === 'input' && n.type === 'checkbox')
+check('hide-menu toggle exists', !!hideBox)
+if (hideBox) {
+  hideBox.checked = true
+  hideBox.fire('change', {})
+  check('hide-menu persisted', window.localStorage.getItem('dsh-grok-ball:hide-menu') === '1')
+}
+
+// right click opens the panel directly
+for (const fn of hostListeners.get('contextmenu') ?? []) fn({ preventDefault() {} })
+check('right click opens panel', panel.style.display === 'block')
 
 // composer cover: the ball must stop above the input box, not slide under it
 let composerTop = 620
 document.querySelectorAll = () => [{ getBoundingClientRect: () => ({ top: composerTop, bottom: 680, height: 60, left: 0, right: 1000 }) }]
 for (const fn of windowListeners.get('resize') ?? []) fn()
 const topAfterComposer = Number.parseFloat(hostNode.style.top)
-check('composer clamp keeps ball above input', topAfterComposer <= composerTop - 92, String(topAfterComposer))
+check('composer clamp keeps ball above input', topAfterComposer <= composerTop - 128, String(topAfterComposer))
 
 // drag past the bottom must not escape the viewport either
 const down3 = { pointerId: 3, pointerType: 'mouse', button: 0, clientX: 540, clientY: 300, preventDefault() {} }
@@ -260,11 +345,12 @@ for (const fn of hostListeners.get('pointerdown')) fn(down3)
 for (const fn of hostListeners.get('pointermove')) fn(move3)
 for (const fn of hostListeners.get('pointerup')) fn(up3)
 const topAfterDrag = Number.parseFloat(hostNode.style.top)
-check('drag cannot pass the composer', topAfterDrag <= composerTop - 92, String(topAfterDrag))
+check('drag cannot pass the composer', topAfterDrag <= composerTop - 128, String(topAfterDrag))
 
 // cleanup
 if (react.__cleanup) react.__cleanup()
 check('cleanup destroys the engine', emotions.includes('destroy'))
+check('cleanup removes the panel', !document.body.children.includes(panel))
 
 console.log(failures.length ? '\nFAILURES: ' + failures.join(', ') : '\nALL OK')
 process.exit(failures.length ? 1 : 0)
