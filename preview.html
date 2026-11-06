@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Grok Ball × DSH 预览</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: radial-gradient(1200px 700px at 70% 20%, #20232b 0%, #12141a 55%, #0c0d11 100%);
+    color: #e7e7ea;
+    font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  .hint {
+    position: fixed; left: 28px; top: 24px; max-width: 380px;
+    color: #9aa0ab; letter-spacing: .02em;
+  }
+  .hint b { color: #ececf1; font-weight: 600; }
+  .hint code {
+    background: rgba(255,255,255,.08); border-radius: 4px; padding: 0 5px;
+    font: 12px/1 ui-monospace, Consolas, monospace; color: #cfd3da;
+  }
+  #ball {
+    position: fixed; width: 120px; height: 120px; cursor: grab;
+    filter: drop-shadow(0 14px 26px rgba(0,0,0,.45));
+    touch-action: none; user-select: none; transition: transform 160ms ease;
+  }
+  #ball:active { cursor: grabbing; }
+  #state {
+    position: fixed; right: 28px; top: 24px; font: 12px/1.5 ui-monospace, Consolas, monospace;
+    color: #8b919c; text-align: right;
+  }
+  #state b { color: #ffd7e6; font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="hint">
+    <b>Grok Ball × DSH · 预览</b><br />
+    球会跟着你的鼠标看；<b>拖动</b>换位置，<b>点一下</b>它会自旋撒彩带。<br />
+    表情按 DSH 运行状态自动演示：待机 <code>02</code> → 思考 <code>30</code> →
+    等你回答 <code>35</code> → 任务完成 <code>33</code>。
+    <br /><br />
+    这个页面只是给你先看看手感；真正的挂件在重启 DSH 后出现在界面右下角（可拖动）。
+  </div>
+  <div id="state">state: <b id="stateName">idle</b></div>
+  <div id="ball"></div>
+
+  <script src="./vendor/grok-ball.js"></script>
+  <script>
+    (function () {
+      var host = document.getElementById('ball');
+      var stateName = document.getElementById('stateName');
+      var ball = GrokBall.create(host, { emotion: '02', eyeScale: 1.2 });
+
+      // place bottom-right-ish
+      function place(x, y) {
+        host.style.left = Math.min(Math.max(8, x), innerWidth - 128) + 'px';
+        host.style.top = Math.min(Math.max(8, y), innerHeight - 128) + 'px';
+      }
+      place(innerWidth - 160, innerHeight - 260);
+
+      // gaze
+      addEventListener('pointermove', function (e) {
+        if (dragging) return;
+        var r = host.getBoundingClientRect();
+        ball.setGaze((e.clientX - (r.left + r.width / 2)) / (r.width / 2),
+                     (e.clientY - (r.top + r.height / 2)) / (r.height / 2));
+      }, { passive: true });
+
+      // drag + click
+      var dragging = null;
+      var downAt = 0;
+      host.addEventListener('pointerdown', function (e) {
+        dragging = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: host.offsetLeft, oy: host.offsetTop, moved: false };
+        host.setPointerCapture(e.pointerId);
+        host.style.cursor = 'grabbing';
+      });
+      host.addEventListener('pointermove', function (e) {
+        if (!dragging || e.pointerId !== dragging.id) return;
+        var dx = e.clientX - dragging.sx, dy = e.clientY - dragging.sy;
+        if (Math.abs(dx) + Math.abs(dy) > 5) dragging.moved = true;
+        if (dragging.moved) place(dragging.ox + dx, dragging.oy + dy);
+      });
+      host.addEventListener('pointerup', function (e) {
+        if (!dragging || e.pointerId !== dragging.id) return;
+        var moved = dragging.moved;
+        dragging = null;
+        host.style.cursor = 'grab';
+        try { host.releasePointerCapture(e.pointerId); } catch (err) {}
+        if (!moved) { ball.spin(1); ball.bounce(); }
+      });
+      host.addEventListener('pointercancel', function () { dragging = null; host.style.cursor = 'grab'; });
+
+      // state tour: the same mapping the DSH plugin uses
+      var tour = [
+        ['02', 'idle 待机'],
+        ['30', 'running 思考中'],
+        ['35', 'waiting 等你回答'],
+        ['33', 'done 任务完成']
+      ];
+      var i = 0;
+      function step() {
+        var row = tour[i = (i + 1) % tour.length];
+        ball.setEmotion(row[0]);
+        stateName.textContent = row[1];
+      }
+      setTimeout(function () { setInterval(step, 4200); step(); }, 2200);
+    })();
+  </script>
+</body>
+</html>

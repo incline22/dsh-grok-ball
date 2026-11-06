@@ -1,0 +1,60 @@
+{
+  "name": "dsh-grok-ball",
+  "version": "0.1.0",
+  "description": "Grok Ball 表情球挂件：会跟着鼠标看人、按 DSH 运行状态换表情（思考中 / 等你回答 / 任务完成 / 待机），可拖动、点一下有反馈。",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "lib",
+    "vendor",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "grok-ball",
+    "widget",
+    "desktop-pet"
+  ],
+  "license": "MIT",
+  "author": "right-leaning",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-session"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node --check lib/client.js && node --check lib/index.js"
+  }
+}
