@@ -20,7 +20,13 @@ DSH 界面上的 Grok Ball 表情球挂件：圆球 + 一双会跟着鼠标看�
 - 没有面板、不发指令：就是一只会看人、会庆祝的小球。
 - 挂载在 `shell.overlay` 槽位（`order: 950`），只有球本身接收指针事件，不挡聊天。
 
-## 安装（本机已装好）
+## 安装
+
+```powershell
+dsh plugin --profile web add dsh-grok-ball
+```
+
+本地开发也可以先 link 自己的目录（profile 名按你实际用的填）：
 
 ```powershell
 dsh plugin --profile desktop add "link:E:\Grok Ball"
@@ -31,7 +37,7 @@ dsh plugin --profile desktop add "link:E:\Grok Ball"
 ## 卸载
 
 ```powershell
-dsh plugin --profile desktop remove dsh-grok-ball
+dsh plugin --profile web remove dsh-grok-ball
 ```
 
 ## 结构
