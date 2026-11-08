@@ -237,6 +237,8 @@ const rendered = element.type(element.props)
 check('component renders a div', rendered && rendered.type === 'div')
 check('host positioned fixed', hostNode.style.position === 'fixed', hostNode.style.position)
 check('default size applied', hostNode.style.width === '92px', hostNode.style.width)
+check('ball box clips overflow', hostNode.children[0].style.overflow === 'hidden', hostNode.children[0].style.overflow)
+check('clip box is larger than the ball', hostNode.children[0].style.width !== '92px', hostNode.children[0].style.width)
 
 // idle state
 check('idle maps to 02', engine.emotionId === '02', engine.emotionId)
@@ -330,22 +332,68 @@ if (hideBox) {
 for (const fn of hostListeners.get('contextmenu') ?? []) fn({ preventDefault() {} })
 check('right click opens panel', panel.style.display === 'block')
 
-// composer cover: the ball must stop above the input box, not slide under it
-let composerTop = 620
-document.querySelectorAll = () => [{ getBoundingClientRect: () => ({ top: composerTop, bottom: 680, height: 60, left: 0, right: 1000 }) }]
-for (const fn of windowListeners.get('resize') ?? []) fn()
-const topAfterComposer = Number.parseFloat(hostNode.style.top)
-check('composer clamp keeps ball above input', topAfterComposer <= composerTop - 128, String(topAfterComposer))
+// the drag range's lower bound is the window bottom (size is 128 now)
+const maxY = 900 - 128 - 8
+const maxX = 1440 - 128 - 8
 
-// drag past the bottom must not escape the viewport either
-const down3 = { pointerId: 3, pointerType: 'mouse', button: 0, clientX: 540, clientY: 300, preventDefault() {} }
-const move3 = { pointerId: 3, clientX: 540, clientY: 5000 }
-const up3 = { pointerId: 3, clientX: 540, clientY: 5000 }
-for (const fn of hostListeners.get('pointerdown')) fn(down3)
-for (const fn of hostListeners.get('pointermove')) fn(move3)
-for (const fn of hostListeners.get('pointerup')) fn(up3)
-const topAfterDrag = Number.parseFloat(hostNode.style.top)
-check('drag cannot pass the composer', topAfterDrag <= composerTop - 128, String(topAfterDrag))
+const dragTo = (targetX, targetY) => {
+  const left = Number.parseFloat(hostNode.style.left)
+  const top = Number.parseFloat(hostNode.style.top)
+  const start = { pointerId: 9, pointerType: 'mouse', button: 0, clientX: left + 46, clientY: top + 46, preventDefault() {} }
+  const move = { pointerId: 9, clientX: start.clientX + (targetX - left), clientY: start.clientY + (targetY - top) }
+  for (const fn of hostListeners.get('pointerdown')) fn(start)
+  for (const fn of hostListeners.get('pointermove')) fn(move)
+  for (const fn of hostListeners.get('pointerup')) fn(move)
+  return { left: Number.parseFloat(hostNode.style.left), top: Number.parseFloat(hostNode.style.top) }
+}
+
+const atBottom = dragTo(500, 5000)
+check('drag reaches the window bottom', atBottom.top === maxY, String(atBottom.top))
+check('bottom edge snaps', atBottom.top === maxY, String(atBottom.top))
+
+const atLeft = dragTo(2, 300)
+check('left edge snaps', atLeft.left === 8, String(atLeft.left))
+
+const atRight = dragTo(5000, 300)
+check('right edge snaps', atRight.left === maxX, String(atRight.left))
+
+const atTop = dragTo(700, 2)
+check('top edge snaps', atTop.top === 8, String(atTop.top))
+
+// middle of the screen must NOT snap
+const middle = dragTo(600, 400)
+check('middle drag stays free', middle.left === 600 && middle.top === 400, JSON.stringify(middle))
+
+// snap settings live in the panel
+const snapTop = findDeep(panel, (n) => n.tagName === 'input' && n.attrs['data-side'] === 'top')
+check('snap sliders exist', !!snapTop && snapTop.value === '24', snapTop && snapTop.value)
+if (snapTop) {
+  snapTop.value = '60'
+  snapTop.fire('input', {})
+  const cfg = JSON.parse(window.localStorage.getItem('dsh-grok-ball:snap') || '{}')
+  check('snap range persisted', cfg.top === 60, JSON.stringify(cfg))
+  const nearTop = dragTo(700, 40)
+  check('custom top range snaps', nearTop.top === 8, String(nearTop.top))
+}
+
+const ratioButton = findDeep(panel, (n) => n.tagName === 'button' && n.textContent === '比例吸附')
+check('ratio mode button exists', !!ratioButton)
+if (ratioButton) {
+  ratioButton.fire('click', {})
+  const cfg = JSON.parse(window.localStorage.getItem('dsh-grok-ball:snap') || '{}')
+  check('ratio mode persisted', cfg.mode === 'ratio', JSON.stringify(cfg))
+  check('px values converted to percent', cfg.top > 0 && cfg.top <= 30, String(cfg.top))
+  const ratioTop = dragTo(700, 40)
+  check('ratio range snaps too', ratioTop.top === 8, String(ratioTop.top))
+}
+
+const leftInput = findDeep(panel, (n) => n.tagName === 'input' && n.attrs['data-side'] === 'left')
+if (leftInput) {
+  leftInput.value = '0'
+  leftInput.fire('input', {})
+  const at20 = dragTo(20, 400)
+  check('left range 0 disables left snap', at20.left === 20, String(at20.left))
+}
 
 // cleanup
 if (react.__cleanup) react.__cleanup()

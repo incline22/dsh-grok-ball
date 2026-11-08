@@ -48,7 +48,9 @@ window.__ModuleLoader__.load({
     var SIZE_KEY = 'dsh-grok-ball:size'
     var HIDE_KEY = 'dsh-grok-ball:hide-menu'
     var EMOTION_KEY = 'dsh-grok-ball:emotion'
+    var SNAP_KEY = 'dsh-grok-ball:snap'
     var EDGE = 8
+    var SNAP = 24
     var SIZE_MIN = 64
     var SIZE_MAX = 160
     var SIZE_DEFAULT = 92
@@ -82,6 +84,35 @@ window.__ModuleLoader__.load({
       return raw === '1'
     }
 
+    var SNAP_SIDES = ['top', 'right', 'bottom', 'left']
+    var SNAP_PX_MAX = 160
+    var SNAP_RATIO_MAX = 30
+
+    function clampSnapValue(value, mode) {
+      var max = mode === 'ratio' ? SNAP_RATIO_MAX : SNAP_PX_MAX
+      return Math.round(Math.min(Math.max(0, value), max))
+    }
+
+    function readSnapCfg() {
+      var fallback = { mode: 'px', top: 24, right: 24, bottom: 24, left: 24 }
+      var raw = readRaw(SNAP_KEY)
+      if (!raw) return fallback
+      try {
+        var parsed = JSON.parse(raw)
+        if (!parsed || typeof parsed !== 'object') return fallback
+        var mode = parsed.mode === 'ratio' ? 'ratio' : 'px'
+        var out = { mode: mode }
+        for (var i = 0; i < SNAP_SIDES.length; i++) {
+          var side = SNAP_SIDES[i]
+          var value = Number(parsed[side])
+          out[side] = Number.isFinite(value) ? clampSnapValue(value, mode) : 24
+        }
+        return out
+      } catch (err) {
+        return fallback
+      }
+    }
+
     function readPos() {
       try {
         var raw = readRaw(POS_KEY)
@@ -103,38 +134,39 @@ window.__ModuleLoader__.load({
       return window.innerHeight
     }
 
-    /**
-     * Top edge of the chat composer, so the ball stops above it instead of
-     * vanishing behind the input box. Detection is structural and best-effort:
-     * any contenteditable/textarea sitting in the lower half of the window.
-     */
-    function composerTop() {
-      try {
-        if (typeof document.querySelectorAll !== 'function') return 0
-        var best = 0
-        var nodes = document.querySelectorAll('[contenteditable="true"], textarea')
-        for (var i = 0; i < nodes.length; i++) {
-          var rect = nodes[i].getBoundingClientRect()
-          if (rect.height < 12) continue
-          if (rect.bottom < window.innerHeight * 0.5) continue
-          if (rect.top > best) best = rect.top
-        }
-        return best
-      } catch (err) {
-        return 0
-      }
-    }
-
+    /** Keep the ball inside the window; the drag range's lower bound is the window bottom. */
     function clampPos(pos, size) {
       var maxX = Math.max(EDGE, window.innerWidth - size - EDGE)
-      var bottom = viewHeight() - EDGE
-      var composer = composerTop()
-      if (composer > 0 && composer < bottom - 24) bottom = Math.min(bottom, composer - EDGE)
-      var maxY = Math.max(EDGE, bottom - size)
+      var maxY = Math.max(EDGE, viewHeight() - size - EDGE)
       return {
         x: Math.min(Math.max(EDGE, pos.x), maxX),
         y: Math.min(Math.max(EDGE, pos.y), maxY)
       }
+    }
+
+    /** Snap to a window edge when a drag ends within that side's own range. */
+    function snapPos(pos, size, cfg) {
+      var next = { x: pos.x, y: pos.y }
+      var vw = window.innerWidth
+      var vh = viewHeight()
+      function limit(side) {
+        var value = cfg[side]
+        if (!(value > 0)) return 0
+        if (cfg.mode === 'ratio') {
+          var dim = side === 'left' || side === 'right' ? vw : vh
+          return (value / 100) * dim
+        }
+        return value
+      }
+      var leftLimit = limit('left')
+      var rightLimit = limit('right')
+      var topLimit = limit('top')
+      var bottomLimit = limit('bottom')
+      if (leftLimit > 0 && pos.x <= leftLimit) next.x = EDGE
+      else if (rightLimit > 0 && vw - (pos.x + size) <= rightLimit) next.x = vw - size - EDGE
+      if (topLimit > 0 && pos.y <= topLimit) next.y = EDGE
+      else if (bottomLimit > 0 && vh - (pos.y + size) <= bottomLimit) next.y = vh - size - EDGE
+      return clampPos(next, size)
     }
 
     function defaultPos(size) {
@@ -172,6 +204,7 @@ window.__ModuleLoader__.load({
     function createGrokBallWidget(host, uiSession) {
       var size = readNumber(SIZE_KEY, SIZE_DEFAULT, SIZE_MIN, SIZE_MAX)
       var hideMenu = readBool(HIDE_KEY, false)
+      var snapCfg = readSnapCfg()
       var pinned = readRaw(EMOTION_KEY)
       if (pinned !== null && pinned !== '' && !findEmotion(pinned)) pinned = null
       if (pinned === '') pinned = null
@@ -227,6 +260,8 @@ window.__ModuleLoader__.load({
       var sizeValue = null
       var hideInput = null
       var followChip = null
+      var snapModeButtons = null
+      var snapRows = null
 
       function applyPos() {
         host.style.left = pos.x + 'px'
@@ -238,6 +273,7 @@ window.__ModuleLoader__.load({
         size = value
         host.style.width = value + 'px'
         host.style.height = value + 'px'
+        layoutBall()
         pos = clampPos(pos, size)
         applyPos()
         if (persist !== false) writeRaw(SIZE_KEY, String(value))
@@ -253,6 +289,44 @@ window.__ModuleLoader__.load({
         }
         render()
         updateChips()
+      }
+
+      function writeSnap() {
+        writeRaw(SNAP_KEY, JSON.stringify(snapCfg))
+      }
+
+      /** Switch between absolute pixels and a percentage of the window's width/height. */
+      function setSnapMode(mode) {
+        if ((mode !== 'ratio' && mode !== 'px') || mode === snapCfg.mode) return
+        var vw = window.innerWidth
+        var vh = viewHeight()
+        SNAP_SIDES.forEach(function (side) {
+          var dim = side === 'left' || side === 'right' ? vw : vh
+          var value = mode === 'ratio' ? (snapCfg[side] / dim) * 100 : (snapCfg[side] / 100) * dim
+          snapCfg[side] = clampSnapValue(value, mode)
+        })
+        snapCfg.mode = mode
+        writeSnap()
+        refreshSnapUI()
+      }
+
+      function refreshSnapUI() {
+        if (!snapModeButtons || !snapRows) return
+        var ratio = snapCfg.mode === 'ratio'
+        Object.keys(snapModeButtons).forEach(function (key) {
+          var on = (key === 'ratio') === ratio
+          var button = snapModeButtons[key]
+          button.style.background = on ? 'rgba(255,158,198,.2)' : 'rgba(255,255,255,.045)'
+          button.style.borderColor = on ? 'rgba(255,158,198,.65)' : 'rgba(255,255,255,.12)'
+        })
+        SNAP_SIDES.forEach(function (side) {
+          var row = snapRows[side]
+          if (!row) return
+          row.input.min = '0'
+          row.input.max = String(ratio ? SNAP_RATIO_MAX : SNAP_PX_MAX)
+          row.input.value = String(snapCfg[side])
+          row.value.textContent = snapCfg[side] + (ratio ? '%' : 'px')
+        })
       }
 
       // --- panel ----------------------------------------------------------
@@ -310,6 +384,45 @@ window.__ModuleLoader__.load({
         })
         sizeRow.appendChild(sizeSlider)
         panel.appendChild(sizeRow)
+
+        // snap section
+        var snapBox = el('div', 'margin-bottom:12px')
+        snapBox.appendChild(el('div', 'color:#b9bec9;font-size:12px;margin-bottom:6px', '吸附'))
+        var modeRow = el('div', 'display:flex;gap:6px;margin-bottom:8px')
+        snapModeButtons = {}
+        var modeDefs = [['px', '绝对吸附'], ['ratio', '比例吸附']]
+        modeDefs.forEach(function (pair) {
+          var modeButton = el('button', 'flex:1;padding:6px 8px;border-radius:9px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.045);color:#dfe2e8;font:inherit;font-size:12px;cursor:pointer', pair[1])
+          modeButton.type = 'button'
+          modeButton.setAttribute('data-mode', pair[0])
+          modeButton.addEventListener('click', function () { setSnapMode(pair[0]) })
+          snapModeButtons[pair[0]] = modeButton
+          modeRow.appendChild(modeButton)
+        })
+        snapBox.appendChild(modeRow)
+
+        var sideNames = { top: '上', right: '右', bottom: '下', left: '左' }
+        snapRows = {}
+        SNAP_SIDES.forEach(function (side) {
+          var row = el('div', 'display:flex;align-items:center;gap:8px;margin:6px 0')
+          row.appendChild(el('span', 'width:28px;color:#b9bec9;font-size:12px', sideNames[side]))
+          var input = el('input', 'flex:1;accent-color:#ff9ec6;cursor:pointer')
+          input.type = 'range'
+          input.setAttribute('data-side', side)
+          input.addEventListener('input', function () {
+            snapCfg[side] = clampSnapValue(Number(input.value), snapCfg.mode)
+            writeSnap()
+            refreshSnapUI()
+          })
+          row.appendChild(input)
+          var out = el('span', 'width:40px;text-align:right;color:#ffd7e6;font-size:11px;font-variant-numeric:tabular-nums')
+          row.appendChild(out)
+          snapRows[side] = { input: input, value: out }
+          snapBox.appendChild(row)
+        })
+        snapBox.appendChild(el('div', 'font-size:11px;color:#7f8590;line-height:1.45', '范围 0 = 关闭该边；比例吸附按窗口宽/高的百分比计算'))
+        panel.appendChild(snapBox)
+        refreshSnapUI()
 
         // emotion section
         var catalog = emotionCatalog()
@@ -616,6 +729,8 @@ window.__ModuleLoader__.load({
         host.style.cursor = 'grab'
         try { host.releasePointerCapture(event.pointerId) } catch (err) { /* ignore */ }
         if (moved) {
+          pos = snapPos(pos, size, snapCfg)
+          applyPos()
           checkPlacement()
           writePos(pos)
         } else {
@@ -685,10 +800,30 @@ window.__ModuleLoader__.load({
       host.setAttribute('aria-label', 'Grok Ball 表情球')
       applyPos()
 
+      var clip = document.createElement('div')
+      clip.style.position = 'absolute'
+      clip.style.overflow = 'hidden'
+      clip.style.pointerEvents = 'none'
+      host.appendChild(clip)
+
       var child = document.createElement('div')
-      child.style.width = '100%'
-      child.style.height = '100%'
-      host.appendChild(child)
+      child.style.position = 'absolute'
+      child.style.pointerEvents = 'auto'
+      clip.appendChild(child)
+
+      /** Ball stays its own size; the clip box is a bit larger so trails and the jump stay whole. */
+      function layoutBall() {
+        var pad = Math.max(6, Math.round(size * 0.18))
+        clip.style.width = (size + pad * 2) + 'px'
+        clip.style.height = (size + pad * 2) + 'px'
+        clip.style.left = (-pad) + 'px'
+        clip.style.top = (-pad) + 'px'
+        child.style.width = size + 'px'
+        child.style.height = size + 'px'
+        child.style.left = pad + 'px'
+        child.style.top = pad + 'px'
+      }
+      layoutBall()
 
       try {
         ball = window.GrokBall.create(child, { emotion: '02', eyeScale: 1.25, label: 'Grok Ball' })
@@ -696,6 +831,11 @@ window.__ModuleLoader__.load({
         warn('create failed: ' + err)
         return function () {}
       }
+
+      // The clip box above bounds the engine's overflow: trails, halo and the
+      // jump stay whole inside it, and nothing leaves the widget.
+      var svg = child.firstElementChild
+      if (svg !== null && svg !== undefined && svg.style) svg.style.overflow = 'visible'
 
       window.addEventListener('pointermove', onPointerMove, { passive: true })
       window.addEventListener('blur', onBlur)
